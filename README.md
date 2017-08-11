@@ -6,7 +6,7 @@ Submission by Connor Lenio. Email: cojamalo@gmail.com
 Exploratory Data Analysis Assessment I
 Completion Date: Aug 11, 2017
 
-Please view https://cojamalo.github.io/DATA-JHU-Capstone-Text-Prediction/import_clean_tokenize.html to properly view Importing, Cleaning, and Tokenization of the Text Data.
+Please view https://cojamalo.github.io/DATA-DUKE-Stats-R-Capstone/EDA_peer.html to properly view Exploratory Data Analysis Assessment I.
 
 
 # Project description from Coursera:
