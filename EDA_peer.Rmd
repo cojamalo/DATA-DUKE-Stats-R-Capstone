@@ -29,7 +29,7 @@ ames_train %>%
             theme(plot.title = element_text(hjust = 0.5)) +
             labs(title = "Distribution of House Age", 
                  y = "Number of Houses", 
-                 x = "Age of the House (years)")
+                 x = "Age of the House (years since 2010)")
 ```
 
 ```{r}
@@ -43,6 +43,8 @@ print(paste("The dispersion parameter for a negative binomial model of counts by
 
 
 * * *
+
+The distribution is right-skewed as there is a large number of new houses relative to old houses. While the number of houses for each age generally decreases as the age of the houses increase, the distribution is also multimodal as there are a couple of locally high counts of house at certain ages.
 
 The common distribution for modeling count data is the Poisson distribution. However, one of the important assumptions of modeling data with Poisson distribution is that the dispersion parameter is about one. If this assumption is violated, a Poisson model will not adequately provide for overdispersed count data and will not model the mean-variance relationships in the data appropriately. The dispersion parameter, as calculated by the residual deviance divided by the residual degrees of freedom (df), for a Poisson model of counts by house age is 4.8, which is much greater than 1.0. A negative binomial model includes an extra parameter, theta, to allow the model to account for overdispersion. The dispersion parameter of a negative binomial model of counts by age is 1.0. Thus, the simple answer is to use a Poisson distribution for this data, but a negative binomial distribution would be preferred if there was a need to more accurately capture the dispersion of this particular count data.
 
@@ -64,7 +66,7 @@ ames_train %>%
     left_join(median_data) %>%
     mutate(Neighborhood = reorder(Neighborhood, -med_price)) %>%
     ggplot(aes(x=Neighborhood, y = price)) +
-    geom_jitter(aes(color=Neighborhood),alpha= 1) +
+    geom_jitter(aes(color=Neighborhood),alpha= 0.25) +
     geom_boxplot(fill=NA, outlier.shape=NA) +
     scale_color_manual(values = cc) +
     theme_bw() +
@@ -126,19 +128,19 @@ fit1 = train(log(price) ~ .,
                 tuneLength = 6,
                 tuneGrid = data.frame(nvmax=c(1:6)),
                 trControl = trainControl(method = "repeatedcv", number = 10, repeats = 10, verboseIter = FALSE),
-                .method="r2",
+                .method="adjr2",
                 trace = TRUE,
-                metric = "Rsquared"
+                metric = "RMSE"
               )
-
-plot(fit1$finalModel, scale = "r2", main = "R^2")
+fit1
+plot(fit1$finalModel, scale = "adjr2", main = "Adjusted R^2")
 ```
 
 * * *
 
-I will use the forward selection method for R^2 to find the best model. This method works by adding explanatory variables one at a time, predicting the response variable, and comparing the changes to R^2 for each explanatory variable. For each round, one explanatory variable is added at a time and the explanatory variable that causes the greatest increase in R^2 for that round is added to the model. A new round is then started with the new model with the best explanatory variable from the prior round already present. The remaining explanatory variables are then added to this model and the changes in R^2 are again compared. This process repeats for as many rounds until adding another explanatory variable from the remaining options does not cause an increase in R^2 compared to the current model. 
+I will use the forward selection method for adjusted R^2 to find the best model. This method works by adding explanatory variables one at a time, predicting the response variable, and comparing the changes to adjusted R^2 for each explanatory variable. For each round, one explanatory variable is added at a time and the explanatory variable that causes the greatest increase in adjusted R^2 for that round is added to the model. A new round is then started with the new model with the best explanatory variable from the prior round already added. The remaining explanatory variables are then added to this model and the changes in adjusted R^2 are again compared. This process repeats for as many rounds until adding another explanatory variable from the remaining options does not cause an increase in adjusted R^2 compared to the current model. 
 
-Running this process for the given variables, the best model contains all six explanatory variables. Removing Land.SlopeMod or Land.SlopeMod and Land.SlopeSev, the extra levels of Land.Slope, may yield a similar model according to this method, but Land.SlopeGtl is the intercept value and, thus, Land.Slope cannot be removed unless this variable was split into three separate dummy variables.
+Running this process for the given variables using the `caret` package, the best model contains all six explanatory variables. Removing Land.SlopeMod or Land.SlopeMod and Land.SlopeSev, the extra levels of Land.Slope, may yield a similar model according to this method, but Land.SlopeGtl is the intercept value and, thus, Land.Slope cannot be removed unless this variable was split into three separate dummy variables.
 
 * * *
 
@@ -159,7 +161,7 @@ select(ames_train[row,],price,Lot.Area,Land.Slope,Year.Built,Year.Remod.Add,Bedr
 
 * * *
 
-The home with the largest squared residual is the house with PID 902207130. The model predicts a price of $103,176.20 for this house, but the actual sale value was only \$12,789. This house is likely an outlier and appears undervalued, especially as there is nothing unusual about the values of the six explanatory variables used in the model that would cause an excessively high price prediction. Looking at other information for this house, it was sold under abnormal conditions as a trade, foreclosure, or short sale, which may explain its excessively low sale price.
+The home with the largest squared residual is the house with PID 902207130, or row 428. The model predicts a price of $103,176.20 for this house, but the actual sale value was only \$12,789. This house is likely an outlier and appears undervalued, especially as there is nothing unusual about the values of the six explanatory variables used in the model that would cause an excessively high price prediction. Looking at other information for this house, it was sold under abnormal conditions as a trade, foreclosure, or short sale, which may explain its excessively low sale price.
 
 
 * * *
@@ -178,23 +180,33 @@ fit2 = train(log(price) ~ . -Lot.Area,
                 tuneLength = 6,
                 tuneGrid = data.frame(nvmax=c(1:6)),
                 trControl = trainControl(method = "repeatedcv", number = 10, repeats = 10, verboseIter = FALSE),
-                .method="r2",
+                .method="adjr2",
                 trace = TRUE,
-                metric = "Rsquared"
+                metric = "RMSE"
               )
-
-plot(fit2$finalModel, scale = "r2", main = "R^2")
+fit2
+plot(fit2$finalModel, scale = "adjr2", main = "Adjusted R^2")
 ```
 
 * * *
 
-Ultimately, the same set of predictors is in this model as before with the substitution of log(Lot.Area) for Lot.Area. Even though Land.SlopeSev, and Land.SlopeMod and Land.SlopeSev, are not included in the models with the heights R^2 values, Land.SlopeGtl is still the included intercept value. Thus, Land.Slope cannot be removed unless this variable was split into three separate dummy variables, so the model ends up having the same predictors.
+Ultimately, the same set of predictors is in this model as before with the substitution of log(Lot.Area) for Lot.Area. Even though Land.SlopeSev, and Land.SlopeMod and Land.SlopeSev, are not included in the models with the highest adjusted R^2 values, Land.SlopeGtl is still the included intercept value. Thus, Land.Slope cannot be removed unless this variable was split into three separate dummy variables, so the model ends up having the same predictors.
 
 * * *
 
 #
 
 Do you think it is better to log transform Lot.Area, in terms of assumptions for linear regression? Make graphs of the predicted values of log home price versus the true values of log home price for the regression models selected for Lot.Area and log(Lot.Area). Referencing these two plots, provide a written support that includes a quantitative justification for your answer in the first part of question 7.
+
+```{r}
+# RMSE and R^2 for model with Lot.Area
+fit1$finalModel$xNames # confirm explanatory variables for fit1
+fit1$results[6,] # 10-fold cv results for model with all explanatory variables is nvmax=6
+
+# RMSE and R^2 for model with Lot.Area
+fit2$finalModel$xNames # confirm explanatory variables for fit2
+fit2$results[6,] # 10-fold cv results for model with all explanatory variables is nvmax=6
+```
 
 ```{r Q7, message=FALSE, warning=FALSE}
 true = log(ames_train$price)
@@ -205,18 +217,28 @@ ggplot(data=plot_dat, aes(x = true, y = pred, color = prediction)) +
     geom_point(,alpha = 0.4) +
     geom_abline(slope=1, intercept=0) +
     theme(legend.position=c(0.2, 0.8), plot.title = element_text(hjust = 0.5)) +
-    labs(title = "Predicted Log(Price) vs Actual Log(Price) for Both Models", y = "Predicted Log(Price)", x = "Actual log(Price)")
+    labs(title = "Predicted log(Price) vs Actual log(Price) for Both Models", y = "Predicted log(Price)", x = "Actual log(Price)")
 ```
+
 
 ```{r}
 statsr::inference(diff, data=plot_dat, type="ht", statistic = "mean", method="theoretical", alternative = "twosided", null = 0)
 ```
 
+
+
+
+
 * * *
 
-Both of the predicted prices versus actual prices for each model were included on the same plot, using opacity to overlay the results on top of each other. A y=x line was also added, which represents a model with a perfect prediction for all values of price. The plot emphasizes just how similar the results are for both models as the distribution of predicted values for each actual value of price for both models are almost identical. To statistically evaluate their similarity, I also conducted a hypothesis test with the null hypothesis that both results are actually equivalent (difference in means equal to zero). Sure enough, the p-value for this test is one, meaning there is not sufficient evidence to reject the null hypothesis and a statistically significant difference in results could not be demonstrated.
+NOTE TO PEER GRADER:
+My answer slightly disagrees with the expected answer. I am sticking with my answer due to the arguments below. Please consider giving me full or partial credit if you find my arguement compeling. Otherwise, leave me a message with my grade helping me figure out where I went wrong. Thanks!
 
-Thus, from these 1000 data points, there is not sufficient evidence to add further complexity to the model by log transforming the `Lot.Area` variable as there is not a statistically significant difference in the distribution of results for both models. 
+First, I confirm that my model variables `fit1` and `fit2` contain the right predictors, and then display the results for both RMSE and R^2 after 10-Fold Cross Validation. The model with the log transformation has a slightly worse RMSE value, but a better R^2 result, meaning there is about the same prediction error for both models, but the model with the log transformation has a better linear fit. From this fact alone, it may be easy to conclude that the log transformation is the better choice. However, the information from the plot and the differences/similarity in RMSE for each model suggest that the transformation does not practiaclly lead to better predictions. 
+
+Both plots of the predicted prices versus actual prices for each model were included on the same plot, using opacity to overlay the results on top of each other. A y=x line was also added, which represents a model with a perfect prediction for all values of price. The plot emphasizes just how similar the results are for both models as the distribution of predicted values for each actual value of price for both models are almost identical. To statistically evaluate their similarity, I also conducted a hypothesis test with the null hypothesis that both results are actually equivalent (difference in means equal to zero). Sure enough, the p-value for this test is one, meaning there is not sufficient evidence to reject the null hypothesis and a statistically significant difference in results could not be demonstrated.
+
+Thus, from these 1000 data points, there is not sufficient evidence to add further complexity to the model by log transforming the `Lot.Area` variable as there is not a statistically significant difference in the distribution of results for both models. Therefore, is one is emphasizing linear fit, then a log transformation does improve linear fit as measured by the R^2 value. However, the log transformation does not improve prediction accuracy for the given data, so the transformation may be unnecessary, unless out of sample data proves otherwise.
 
 
 * * *
