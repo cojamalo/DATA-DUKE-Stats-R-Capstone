@@ -1,0 +1,223 @@
+---
+title: "Peer Assessment I"
+output:
+  html_document: 
+    pandoc_args: [
+      "--number-sections",
+    ]
+---
+
+
+First, let us load the data and necessary packages:
+
+```{r load, message = FALSE}
+load("ames_train.Rdata")
+library(caret)
+library(MASS)
+library(tidyverse)
+```
+
+#
+Make a labeled histogram (with 30 bins) of the ages of the houses in the data set, and describe the distribution.
+
+
+```{r Q1}
+ames_train %>% 
+        mutate(age = max(Year.Built) - Year.Built) %>%
+        ggplot(aes(x=age)) +
+            geom_histogram(bins=30, fill = '#F8766D') +
+            theme(plot.title = element_text(hjust = 0.5)) +
+            labs(title = "Distribution of House Age", 
+                 y = "Number of Houses", 
+                 x = "Age of the House (years)")
+```
+
+```{r}
+glm_data = ames_train %>% mutate(age = max(Year.Built) - Year.Built) %>% group_by(age) %>% summarize(count = n())
+fit_glm <- glm(count ~ age, data = glm_data, family = "poisson")
+fit_nb <- glm.nb(count ~ age, data = glm_data)
+print(paste("The dispersion parameter for a poisson model of counts by age is",format(summary(fit_glm)$deviance/summary(fit_glm)$df.residual, digits = 2)))
+print(paste("The dispersion parameter for a negative binomial model of counts by age is",format(summary(fit_nb)$deviance/summary(fit_nb)$df.residual, digits = 2)))
+
+```
+
+
+* * *
+
+The common distribution for modeling count data is the Poisson distribution. However, one of the important assumptions of modeling data with Poisson distribution is that the dispersion parameter is about one. If this assumption is violated, a Poisson model will not adequately provide for overdispersed count data and will not model the mean-variance relationships in the data appropriately. The dispersion parameter, as calculated by the residual deviance divided by the residual degrees of freedom (df), for a Poisson model of counts by house age is 4.8, which is much greater than 1.0. A negative binomial model includes an extra parameter, theta, to allow the model to account for overdispersion. The dispersion parameter of a negative binomial model of counts by age is 1.0. Thus, the simple answer is to use a Poisson distribution for this data, but a negative binomial distribution would be preferred if there was a need to more accurately capture the dispersion of this particular count data.
+
+
+* * *
+
+
+#
+
+The mantra in real estate is "Location, Location, Location!" Make a graphical display that relates a home price to its neighborhood in Ames, Iowa. Which summary statistics are most appropriate to use for determining the most expensive, least expensive, and most heterogeneous (having the most variation in housing price) neighborhoods? Report which neighborhoods these are based on the summary statistics of your choice. Report the value of your chosen summary statistics for these neighborhoods.
+
+```{r}
+median_data = ames_train %>% 
+    group_by(Neighborhood) %>% 
+    summarize(med_price = median(price), IQR_price = IQR(price))
+
+cc = sample(colorspace::rainbow_hcl(27, c = 100, l=60,start = 0, end = 300), 27)
+ames_train %>%
+    left_join(median_data) %>%
+    mutate(Neighborhood = reorder(Neighborhood, -med_price)) %>%
+    ggplot(aes(x=Neighborhood, y = price)) +
+    geom_jitter(aes(color=Neighborhood),alpha= 1) +
+    geom_boxplot(fill=NA, outlier.shape=NA) +
+    scale_color_manual(values = cc) +
+    theme_bw() +
+    theme(plot.title = element_text(hjust = 0.5), axis.text.x = element_text(angle = 90, hjust = 1)) +
+    guides(fill=FALSE, color=FALSE) +
+    labs(title = "Distribution of Home Prices by Neighborhood", 
+                 y = "Home Price", 
+                 x = "Neighborhood")
+    
+```
+
+
+```{r Q2, fig.height=10, message=FALSE, warning=FALSE}
+# Most expensive by median
+median_data %>% arrange(desc(med_price)) %>% .[1,c(1,2)]
+# Least expensive by median
+median_data %>% arrange(med_price) %>% .[1,c(1,2)]
+# Most heterogenous by IQR
+median_data %>% arrange(desc(IQR_price)) %>% .[1,c(1,3)]
+```
+
+
+* * *
+
+In order to determine the common prices of the houses in each neighborhood, a measure of center must be selected in order to compare the typical house price in each neighborhood. The two most common measures of center are the mean and median. In this case, the median will be used as the house prices for each neighborhood are not normally distributed. When data is not normally distributed the mean is often biased in the direction of the data's skew. Thus, the median, which is not as sensitive to skew, is a better measure of center. Similarly, the interquartile range is a better measure of variability in non-normally distributed data as the standard deviation is similarly sensitive to skew and outliers as the mean. 
+
+In comparing median prices, Stone Brook is the most expensive neighborhood with a median home price of \$340691.50. Meadow Village is the least expensive neighborhood with a median home price of \$85,780. Stone Brook also has the greatest variation in price with an interquartile range of \$151,358.
+
+
+
+* * *
+
+#
+
+Which variable has the largest number of missing values? Explain why it makes sense that there are so many missing values for this variable.
+
+```{r Q3}
+# Six variables with the highest proportion of NAs
+apply(ames_train, 2, function(x) mean(is.na(x))) %>% sort %>% tail
+```
+
+
+* * *
+
+Pool Quality, or "Pool.QC", is the variable with the largest number of missing values. This number is likely high as "NA" is coded as "No Pool" in the data and most homes must not have a pool.
+
+  
+* * *
+
+#
+
+We want to predict the natural log of the home prices. Candidate explanatory variables are lot size in square feet (Lot.Area), slope of property (Land.Slope), original construction date (Year.Built), remodel date (Year.Remod.Add), and the number of bedrooms above grade (Bedroom.AbvGr). Pick a model selection or model averaging method covered in the Specialization, and describe how this method works. Then, use this method to find the best multiple regression model for predicting the natural log of the home prices.
+
+
+```{r Q4}
+fit1 = train(log(price) ~ .,
+                data = select(ames_train,price,Lot.Area,Land.Slope,Year.Built,Year.Remod.Add,Bedroom.AbvGr),
+                method = "leapForward",
+                tuneLength = 6,
+                tuneGrid = data.frame(nvmax=c(1:6)),
+                trControl = trainControl(method = "repeatedcv", number = 10, repeats = 10, verboseIter = FALSE),
+                .method="r2",
+                trace = TRUE,
+                metric = "Rsquared"
+              )
+
+plot(fit1$finalModel, scale = "r2", main = "R^2")
+```
+
+* * *
+
+I will use the forward selection method for R^2 to find the best model. This method works by adding explanatory variables one at a time, predicting the response variable, and comparing the changes to R^2 for each explanatory variable. For each round, one explanatory variable is added at a time and the explanatory variable that causes the greatest increase in R^2 for that round is added to the model. A new round is then started with the new model with the best explanatory variable from the prior round already present. The remaining explanatory variables are then added to this model and the changes in R^2 are again compared. This process repeats for as many rounds until adding another explanatory variable from the remaining options does not cause an increase in R^2 compared to the current model. 
+
+Running this process for the given variables, the best model contains all six explanatory variables. Removing Land.SlopeMod or Land.SlopeMod and Land.SlopeSev, the extra levels of Land.Slope, may yield a similar model according to this method, but Land.SlopeGtl is the intercept value and, thus, Land.Slope cannot be removed unless this variable was split into three separate dummy variables.
+
+* * *
+
+#
+
+Which home has the largest squared residual in the previous analysis (Question 4)? Looking at all the variables in the data set, can you explain why this home stands out from the rest (what factors contribute to the high squared residual and why are those factors relevant)?
+
+
+```{r Q5}
+pred = predict(fit1)
+resid = (log(ames_train$price) - pred)^2
+row = which.max(resid)
+
+paste("The predicted price for the house is",format(exp(predict(fit1,ames_train[row,])),big.mark=","))
+
+select(ames_train[row,],price,Lot.Area,Land.Slope,Year.Built,Year.Remod.Add,Bedroom.AbvGr)
+```
+
+* * *
+
+The home with the largest squared residual is the house with PID 902207130. The model predicts a price of $103,176.20 for this house, but the actual sale value was only \$12,789. This house is likely an outlier and appears undervalued, especially as there is nothing unusual about the values of the six explanatory variables used in the model that would cause an excessively high price prediction. Looking at other information for this house, it was sold under abnormal conditions as a trade, foreclosure, or short sale, which may explain its excessively low sale price.
+
+
+* * *
+
+#
+
+Use the same model selection method you chose in Question 4 to again find the best multiple regression model to predict the natural log of home prices, but this time **replacing Lot.Area with log(Lot.Area)**. Do you arrive at a model including the same set of predictors?
+
+
+```{r Q6}
+ames_train$`log(Lot.Area)` = log(ames_train$Lot.Area)
+
+fit2 = train(log(price) ~ . -Lot.Area,
+                data = select(ames_train,price,Lot.Area,Land.Slope,Year.Built,Year.Remod.Add,Bedroom.AbvGr, `log(Lot.Area)`),
+                method = "leapForward",
+                tuneLength = 6,
+                tuneGrid = data.frame(nvmax=c(1:6)),
+                trControl = trainControl(method = "repeatedcv", number = 10, repeats = 10, verboseIter = FALSE),
+                .method="r2",
+                trace = TRUE,
+                metric = "Rsquared"
+              )
+
+plot(fit2$finalModel, scale = "r2", main = "R^2")
+```
+
+* * *
+
+Ultimately, the same set of predictors is in this model as before with the substitution of log(Lot.Area) for Lot.Area. Even though Land.SlopeSev, and Land.SlopeMod and Land.SlopeSev, are not included in the models with the heights R^2 values, Land.SlopeGtl is still the included intercept value. Thus, Land.Slope cannot be removed unless this variable was split into three separate dummy variables, so the model ends up having the same predictors.
+
+* * *
+
+#
+
+Do you think it is better to log transform Lot.Area, in terms of assumptions for linear regression? Make graphs of the predicted values of log home price versus the true values of log home price for the regression models selected for Lot.Area and log(Lot.Area). Referencing these two plots, provide a written support that includes a quantitative justification for your answer in the first part of question 7.
+
+```{r Q7, message=FALSE, warning=FALSE}
+true = log(ames_train$price)
+pred1 = predict(fit1)
+pred2 = predict(fit2)
+plot_dat = data.frame(true=true, pred = c(pred1, pred2), prediction=c(rep(c("Lot.Area"),1000),rep(c("log(Lot.Area))"),1000)), diff=pred1-pred2)
+ggplot(data=plot_dat, aes(x = true, y = pred, color = prediction)) +
+    geom_point(,alpha = 0.4) +
+    geom_abline(slope=1, intercept=0) +
+    theme(legend.position=c(0.2, 0.8), plot.title = element_text(hjust = 0.5)) +
+    labs(title = "Predicted Log(Price) vs Actual Log(Price) for Both Models", y = "Predicted Log(Price)", x = "Actual log(Price)")
+```
+
+```{r}
+statsr::inference(diff, data=plot_dat, type="ht", statistic = "mean", method="theoretical", alternative = "twosided", null = 0)
+```
+
+* * *
+
+Both of the predicted prices versus actual prices for each model were included on the same plot, using opacity to overlay the results on top of each other. A y=x line was also added, which represents a model with a perfect prediction for all values of price. The plot emphasizes just how similar the results are for both models as the distribution of predicted values for each actual value of price for both models are almost identical. To statistically evaluate their similarity, I also conducted a hypothesis test with the null hypothesis that both results are actually equivalent (difference in means equal to zero). Sure enough, the p-value for this test is one, meaning there is not sufficient evidence to reject the null hypothesis and a statistically significant difference in results could not be demonstrated.
+
+Thus, from these 1000 data points, there is not sufficient evidence to add further complexity to the model by log transforming the `Lot.Area` variable as there is not a statistically significant difference in the distribution of results for both models. 
+
+
+* * *
+###
