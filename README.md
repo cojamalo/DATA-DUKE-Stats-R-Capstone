@@ -8,6 +8,17 @@ Completion Date: Aug 11, 2017
 
 Please view https://cojamalo.github.io/DATA-DUKE-Stats-R-Capstone/EDA_peer.html to properly view Exploratory Data Analysis Assessment I.
 
+Peer Review Final Project
+* Final Capstone Report
+Completion Date: Sep 9, 2017
+
+Please view https://cojamalo.github.io/DATA-DUKE-Stats-R-Capstone/Final_peer.html to properly view Peer Review Final Project.
+
+Peer Review Final Project Supplementary
+* Background calculations used in the final project
+Completion Date: Sep 9, 2017
+
+Please view https://cojamalo.github.io/DATA-DUKE-Stats-R-Capstone/Final_supporting.html to properly view Peer Review Final Project Supplementary.
 
 # Project description from Coursera:
 
