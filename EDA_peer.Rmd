@@ -66,7 +66,7 @@ ames_train %>%
     left_join(median_data) %>%
     mutate(Neighborhood = reorder(Neighborhood, -med_price)) %>%
     ggplot(aes(x=Neighborhood, y = price)) +
-    geom_jitter(aes(color=Neighborhood),alpha= 0.25) +
+    geom_jitter(aes(color=Neighborhood),alpha= 0.25, height = 0, width = 0.3) +
     geom_boxplot(fill=NA, outlier.shape=NA) +
     scale_color_manual(values = cc) +
     theme_bw() +
@@ -231,14 +231,11 @@ statsr::inference(diff, data=plot_dat, type="ht", statistic = "mean", method="th
 
 * * *
 
-NOTE TO PEER GRADER:
-My answer may slightly disagree with the expected answer. I am sticking with my answer due to the arguments below. Please consider giving me full or partial credit if you find my argument compelling. Otherwise, leave me a message with my grade helping me figure out where I went wrong. Thanks!
+First, I confirm that my model variables `fit1` and `fit2` contain the right predictors, and then display the results for both RMSE and R^2 after 10-Fold Cross Validation. The model with the log transformation has a slightly lower RMSE value and a higher R^2 result, meaning the model with the log transformation has a slightly lower prediction error and better linear fit. From this fact alone, the log transformation is the better choice. 
 
-First, I confirm that my model variables `fit1` and `fit2` contain the right predictors, and then display the results for both RMSE and R^2 after 10-Fold Cross Validation. The model with the log transformation has a slightly worse RMSE value, but a better R^2 result, meaning there is about the same prediction error for both models, but the model with the log transformation has a better linear fit. From this fact alone, it may be simple to conclude that the log transformation is the better choice. However, the information from the plot and the differences/similarity in RMSE for each model suggest that the transformation does not practically lead to better predictions. 
+However, I want to qualify that using the plots alone to make this decision does not strongly support this conclusion. Both plots of the predicted prices versus actual prices for each model were included on the same plot, using opacity to overlay the results on top of each other. A y=x line was also added, which represents a model with a perfect prediction for all values of price. The plot emphasizes just how similar the results are for both models as the distribution of predicted values for each actual value of price for both models are almost identical. To statistically evaluate their similarity, I also conducted a hypothesis test with the null hypothesis that both results are actually equivalent (difference in means equal to zero). Sure enough, the p-value for this test is one, meaning there is not sufficient evidence to reject the null hypothesis and a statistically significant difference in results for both models could not be demonstrated.
 
-Both plots of the predicted prices versus actual prices for each model were included on the same plot, using opacity to overlay the results on top of each other. A y=x line was also added, which represents a model with a perfect prediction for all values of price. The plot emphasizes just how similar the results are for both models as the distribution of predicted values for each actual value of price for both models are almost identical. To statistically evaluate their similarity, I also conducted a hypothesis test with the null hypothesis that both results are actually equivalent (difference in means equal to zero). Sure enough, the p-value for this test is one, meaning there is not sufficient evidence to reject the null hypothesis and a statistically significant difference in results for both models could not be demonstrated.
-
-Thus, from these 1000 data points, there is not sufficient evidence to add further complexity to the model by log transforming the `Lot.Area` variable as there is not a statistically significant difference in the distribution of results for both models. Therefore, if one is emphasizing linear fit alone, then a log transformation does improve linear fit as measured by the R^2 value. However, the log transformation does not improve prediction accuracy for the given data, so the transformation may be unnecessary, unless out of sample data proves otherwise.
+Thus, from these 1000 data points, there is not sufficient evidence to add further complexity to the model by log transforming the `Lot.Area` variable as there is not a statistically significant difference in the distribution of results for both models. However, if one ignores this likelihood that the log transformation has better accuracy and a linear fit only by chance, a log transformation is the better choice. It may be worth it to explore those data points that give the distribution of Lot.Area feautres of an exponential distribution. These points may be outliers or so rare as to not merit log transforming all Lot.Area values to accomodate them.
 
 
 * * *
