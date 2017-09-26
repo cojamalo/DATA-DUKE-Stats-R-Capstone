@@ -1,0 +1,836 @@
+---
+title: "Predicting the Sale Prices of Ames, Iowa Houses - Revisited"
+output:
+  html_document: 
+    pandoc_args: [
+      "--number-sections",
+    ]
+---
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(fig.align='center', message = FALSE, warning=FALSE, echo=FALSE)
+```
+
+```{r, include=FALSE}
+# Title: Multiple Linear Regression Tools
+# Date: 2017-04-28
+# Most Recent Update: 2017-05-11
+# Author: Connor Lenio
+# Dependencies: dplyr, DAAG, AICcmodavg
+# Enhances: leaps::regsubsets, stats::AIC, stats::step, DAAG::cv.lm, AICcmodavg::AICc
+# Description: Functions to evalute linear fit for the purposes of multiple regression and predictor selection
+
+# Why: These functions were constructed to assist in learning about linear regression and evaluating linear models
+# with the mtcars data set and may or may not be helpful to actual use outside of simple regression using data like mtcars
+
+### Please note ###
+# Depending on your specific case, it will be better to use alternative methods of model selection such as:
+# 1) leaps::resubsets
+# best_subsets<- regsubsets(mpg ~ am + ., data = new_mtcars)
+# plot(best_subsets, scale = "adjr2")
+# plot(best_subsets, scale = "bic")
+# plot(best_subsets, scale = "Cp")
+# 2) stats::step
+# null <- lm(mpg~am, data=new_mtcars)
+# full<- lm(mpg ~ ., new_mtcars)   
+# best_step <- step(null, scope=list(lower=null, upper=full))
+###
+
+## Load Dependencies
+#library(DAAG)
+library(AICcmodavg)
+library(dplyr)
+
+
+## Function that takes a model and the data such as: 
+# model_eval(fit.BIC, new_mtcars)
+# Note: 10x10 K Fold CV is optional to save computation time
+# Set kfold = True to include 10x10 K Fold CV
+# Return: A single row with scores for each analysis metric 
+#                           model terms adj_R_2 BIC AICc LOOCV KFOLD
+#  mpg ~ am + recip_hp + log_wt     3   0.882   151  145  5.31  5.81
+model_eval <- function(model, data, LOO_CV = FALSE, kfold = FALSE) {
+    options(warn=-1)
+    LOOCV = NA
+    if (LOO_CV) {
+        # For kfold, m = k for LOOCV
+        one_run <- CVlm(data, model, m = nrow(data), printit = FALSE, plotit = FALSE)
+        # 5 x 2 Fold Mean Square
+        LOOCV <- attributes(one_run)$ms
+    }
+    MSE = NA
+    if (kfold) {
+        # 10x10 K-Fold Cross Validation
+        ms <- c()
+        for (i in 1:10) {
+            ms_run <- CVlm(data, model, m = 10, seed = i, printit = FALSE, plotit = FALSE)
+            ms_run <- attributes(ms_run)$ms 
+            ms <- c(ms, ms_run) 
+        }
+        MSE <- mean(ms)
+        MSE_hi <- round(1.96 * sqrt(MSE),digits=2)
+        MSE_lo <- round(-1.96 * sqrt(MSE),digits=2)
+    }
+    options(warn=0)
+    # Model code
+    model_name <- attributes(model$model)$terms
+    model_name <- Reduce(paste, deparse(model_name, width.cutoff = 500))
+    # Adjusted R^2
+    R_2 <- summary(model)$adj.r.squared
+    #Parsimony
+    predictors <- length(attributes(summary(model)$terms)$term.labels)
+    # AICc Analysis
+    AICc <- AICc(model) 
+    # BIC Analysis
+    BIC <- BIC(model)
+    # RMSE
+    fitted = predict(model, se.fit=TRUE)
+    RMSE <- sqrt(mean((ames_train$price - exp(fitted$fit))^2))
+    # MSE <- mean(ms)
+    output <- data.frame(model = model_name, terms = predictors, adj_R_2 = R_2, BIC=BIC, AICc = AICc, RMSE = RMSE, LOOCV = LOOCV, KFOLD = MSE) 
+    return(output)
+}
+
+## Helper function that takes input such as the following: 
+# find_fit(mpg, wt, mtcars, "Log", lm(mpg~log(wt), mtcars))
+# Returns: single row data frame with scores for each model analysis metric
+#   type terms adj_R_2 BIC AICc LOOCV KFOLD
+#    Log     1   0.804 162  158  7.64    NA
+find_fit <- function(response, explanatory, data, type, model) {
+    data$response <- eval(substitute(response), data)
+    data$explanatory <- eval(substitute(explanatory), data)
+    out <- tryCatch(model, error = function(e) e)
+    if(any(class(out) == "error")) {
+        output <- data.frame(type = type, terms = NA, adj_R_2 = NA,BIC=NA,AICc = NA, RMSE = NA, LOOCV = NA, KFOLD = NA)
+    }
+    else {
+        output <- cbind(type = type, select(model_eval(model, data),-model))
+    }
+    return(output)
+}
+
+## Function that takes input such as the following: 
+# compare_fit(mpg, disp, mtcars)
+# Returns: multiple row data frame for each transformation type ranked by LOOCV score 
+# Options: Can select the target metric for model fit: BIC, AICc, or RMSE (default)
+compare_fit <- function(response, explanatory, data, target = "RMSE") {
+    if (class(response) == "character") {
+        response <- as.name(response)
+        explanatory <- as.name(explanatory)
+    }
+    data$response <- eval(substitute(response), data)
+    data$explanatory <- eval(substitute(explanatory), data)
+    output <- rbind(find_fit(response, explanatory, data, "Linear", lm(response~explanatory, data)),
+                    find_fit(response, explanatory, data, "Log", lm(response~log(explanatory), data)),
+                    find_fit(response, explanatory, data, "Log10", lm(response~log10(explanatory), data)),
+                    find_fit(response, explanatory, data, "Log2", lm(response~log2(explanatory), data)),
+                    find_fit(response, explanatory, data, "Exponential", lm(response~exp(explanatory), data)),
+                    find_fit(response, explanatory, data, "Exp10", lm(response~I(10^explanatory), data)),
+                    find_fit(response, explanatory, data, "Exp2", lm(response~I(2^explanatory), data)),
+                    find_fit(response, explanatory, data, "Reciprical", lm(response~I(1/explanatory), data)),
+                    find_fit(response, explanatory, data, "Square", lm(response~I(explanatory^2), data)),
+                    find_fit(response, explanatory, data, "Cube", lm(response~I(explanatory^3), data)),
+                    find_fit(response, explanatory, data, "Square Root", lm(response~sqrt(explanatory), data)),
+                    find_fit(response, explanatory, data, "Cubic Root", lm(response~I(explanatory^(1/3)), data)))
+    output <- output %>% arrange(output[,target]) %>% select(-LOOCV:-KFOLD)
+    output <- output[complete.cases(output),]
+    if(any(output$type %in% "Exponential") & isTRUE(all.equal(filter(output, type == "Exponential")[[target]][1], output[[target]][1], tolerance = 0.0001))) {
+        output <- rbind(filter(output, type == "Exponential"), filter(output, type != "Exponential"))
+    }
+    if(any(output$type %in% "Log") & isTRUE(all.equal(filter(output, type == "Log")[[target]][1], output[[target]][1], tolerance = 0.0001))) {
+        output <- rbind(filter(output, type == "Log"), filter(output, type != "Log"))
+    }
+    if(any(output$type %in% "Linear") & isTRUE(all.equal(filter(output, type == "Linear")[[target]][1], output[[target]][1], tolerance = 0.0001))) {
+        output <- rbind(filter(output, type == "Linear"), filter(output, type != "Linear"))
+    }
+    return(output)
+}
+
+
+## Function that takes input such as the following: 
+# find_best_trans(mpg, mtcars)
+# Returns: multiple-row data frame with the "best" linear transformation for each variable in the data
+# Options: Can select the target metric for model fit: BIC, AICc, or RMSE (default)
+find_best_trans <- function(response, data, target = "RMSE") {
+    print("Processing, please wait.....")
+    output <- data.frame()
+    for (i in 1:ncol(data)) {
+        response <- as.character(substitute(response))
+        explan <- names(data)[i]
+        row <- compare_fit(response, explan, data, target)[1:3,]
+        row <- cbind(data.frame(variable = explan), row)
+        output <- rbind(output, row)
+    }
+    output <- output[-1,] %>% arrange(RMSE, AICc)
+    return(output)
+    
+}
+```
+
+
+
+### Submission by Connor Lenio. Email: cojamalo@gmail.com
+
+Completion Date: Sept. 25, 2017
+
+
+# Background
+
+<i>
+As a statistical consultant working for a real estate investment firm, your task is to develop a model to predict the selling price of a given home in Ames, Iowa. Your employer hopes to use this information to help assess whether the asking price of a house is higher or lower than the true value of the house. If the home is undervalued, it may be a good investment for the firm.
+</i>
+
+# Training Data and relevant packages
+<i>
+In order to better assess the quality of the model you will produce, the data have been randomly divided into three separate pieces: a training data set, a testing data set, and a validation data set. For now, we will load the training data set, the others will be loaded and used later.
+</i>
+
+```{r load, message = FALSE, echo=TRUE}
+load("ames_train.Rdata")
+ames_train = ames_train %>% filter(Sale.Condition == "Normal")
+```
+
+The training data will exclude any house not sold under normal conditions. Abnormal sale conditions can substantially change the relationships between house features and their sale prices, so any house with abnormal sale conditions will not be predicted. 
+
+<i>
+Use the code block below to load any necessary packages
+</i>
+
+```{r packages, message = FALSE, echo=TRUE}
+library(statsr)
+library(BAS)
+library(pander)
+library(tidyverse)
+library(forecast)
+```
+
+## Part 1 - Exploratory Data Analysis (EDA)
+
+<i>
+When you first get your data, it's very tempting to immediately begin fitting models and assessing how they perform.  However, before you begin modeling, it's absolutely essential to explore the structure of the data and the relationships between the variables in the data set.
+
+Do a detailed EDA of the ames_train data set, to learn about the structure of the data and the relationships between the variables in the data set (refer to Introduction to Probability and Data, Week 2, for a reminder about EDA if needed). Your EDA should involve creating and reviewing many plots/graphs and considering the patterns and relationships you see. 
+
+After you have explored completely, submit the three graphs/plots that you found most informative during your EDA process, and briefly explain what you learned from each (why you found each informative).
+</i>
+
+* * *
+
+### Checking the Distribution of the Response Variable
+
+One of the first features of the data to explore is the distribution of the response variable, `price`. Since the models will predict this variable, it is important to ensure the model's assumptions will match the actual features of the data. Working with linear regression, the data should be normally distributed to ensure a valid result. Thus, the first plot for this EDA will explore the distribution of `price`.
+
+Summary statistics:
+```{r creategraphs, echo=TRUE, results="asis"}
+ames_train %>% 
+    summarize(Q1 = quantile(price, 0.25), MEAN = mean(price), MEDIAN = median(price),Q3 = quantile(price, 0.75), IQR = IQR(price), STDEV = sd(price)) %>%
+    mutate(SKEW = ifelse(MEAN > MEDIAN, "RIGHT", "LEFT")) %>%
+    pandoc.table
+```
+
+The summary statistics suggest that the data is skewed to the right as the mean is about $20,000 larger than the median.
+
+<br>
+
+Distribution plots:
+```{r fig.height=8, echo=FALSE}
+par(mfrow=c(3,2))
+qqnorm(ames_train$price, lty = 2)
+qqline(ames_train$price)
+plot(density(ames_train$price), main="Probability Density of Std. Residuals (price)", 
+    xlab="Price", ylab="P(Price)")
+
+qqnorm(log(ames_train$price), lty = 2)
+qqline(log(ames_train$price))
+plot(density(log(ames_train$price)), main="Probability Density of Std. Residuals (log_price)", 
+    xlab="Log Price", ylab="P(Log Price)")
+```
+
+The top row of plots confirms the summary statistics as a long tail to the right is present in the distribution. This feature is likely caused by a small number of houses that are significantly more expensive than the majority of other houses in the data. This gives the data features of an exponential distribution. When this issue occurs in the data, one can log-transform the response variable in order to transform its distribution to be more like a normal distribution. The bottom row of plots shows the results of a log transformation of the price. The Q-Q plot of the log-transformed is more linear than the Q-Q plot of the untransformed data, signifying that the data is distributed more like a normal distribution than before the transformation. For the rest of this project, the response variable will be log-transformed during prediction to ensure a successful linear regression model is produced.
+
+<br>
+
+### Exploring the Relationship between Overall Quality and Price
+
+One of the visibly stronger relationships in the data is between Overall Quality and Price.
+
+Table of house prices by overall quality:
+```{r, echo=TRUE, results = "asis"}
+ames_train %>% 
+    group_by(Overall.Qual) %>% 
+    summarize(Q1 = quantile(price, 0.25), MEAN = mean(price), MEDIAN = median(price),Q3 = quantile(price, 0.75), IQR = IQR(price), STDEV = sd(price)) %>%
+    mutate(SKEW = ifelse(MEAN > MEDIAN, "RIGHT", "LEFT")) %>%
+    pandoc.table
+```
+The summary statistics give one indication of how price is positively correlated with overall quality.
+
+<br>
+
+Visualization of the table:
+```{r fig.height=8, echo=FALSE}
+median_data = ames_train %>% 
+    group_by(Overall.Qual) %>% 
+    summarize(med_price = median(price), IQR_price = IQR(price))
+
+cc = sample(colorspace::rainbow_hcl(27, c = 100, l=60,start = 0, end = 300), 10)
+ames_train %>%
+    left_join(median_data) %>%
+    mutate(Overall.Qual = reorder(Overall.Qual, -med_price)) %>%
+    ggplot(aes(x=Overall.Qual, y = price)) +
+    geom_jitter(aes(color=Overall.Qual),alpha= 0.4, height = 0, width = 0.3) +
+    geom_boxplot(fill=NA, outlier.shape=NA) +
+    scale_color_manual(values = cc) +
+    theme_bw() +
+    theme(plot.title = element_text(hjust = 0.5), axis.text.x = element_text(angle = 90, hjust = 1)) +
+    guides(fill=FALSE, color=FALSE) +
+    labs(title = "Distribution of Home Prices by Overall Quality", 
+                 y = "Home Price", 
+                 x = "Overall Quality")
+```
+The boxplot with swarmplot overlay shows the distribution of the house prices for each quality level. Its worth noting that many houses score between an eight and a four, while few houses earn more extreme values. Thus, the model may have varying accuracy of predictions depending on the quality level since there is not an equal number of representative houses for each quality level. This feature hints that other explanatory variables may also exemplify such relationships that will cause the final model to perform differently depending on whether the predicted house price has a more extreme value for an explanatory variable or not.  
+
+
+<br>
+
+### Exploring the Relationship between Area and Price
+
+Finally, it is worth exploring the linearity of the relationships between the quantitative explanatory variables and the response variable. One relationship of note is between `area` and `price`.
+
+Distribution plots:
+```{r fig.height=8, echo=FALSE}
+par(mfrow=c(2,2))
+qqnorm(ames_train$area, lty = 2)
+qqline(ames_train$area)
+plot(density(ames_train$area), main="Probability Density of Std. Residuals (area)", 
+    xlab="Area", ylab="P(Area)")
+
+qqnorm(log(ames_train$area), lty = 2)
+qqline(log(ames_train$area))
+plot(density(log(ames_train$area)), main="Probability Density of Std. Residuals (log(area))", 
+    xlab="log(Area)", ylab="P(log(Area))")
+```
+
+Similar to the EDA for `price`, it appears that log-transforming `area` gives a more normal distribution.
+<br>
+
+Linear fit plots:
+```{r}
+library(gridExtra)
+left = ggplot(ames_train, aes(x=area, y=log(price))) + 
+        geom_point() + 
+        geom_smooth(method=loess, fill="red", color="red") +
+        geom_smooth(method=lm, fill="blue", color="blue") +
+        ylim(9,14) +
+        theme(plot.title = element_text(hjust = 0.5), axis.text.x = element_text(angle = 90, hjust = 1)) +
+        labs(title = "Log Price versus Area", 
+                 y = "Log Price", 
+                 x = "Area")
+
+right = ggplot(ames_train, aes(x=log(area), y=log(price))) + 
+        geom_point() + 
+        geom_smooth(method=loess, fill="red", color="red") +
+        geom_smooth(method=lm, fill="blue", color="blue") +
+        ylim(9,14) +
+        theme(plot.title = element_text(hjust = 0.5), axis.text.x = element_text(angle = 90, hjust = 1)) +
+        labs(title = "Log Price versus Log Area", 
+                 y = "Log Price", 
+                 x = "Log Area")
+
+grid.arrange(left,right,nrow=1)
+```
+Comparing the linear trend line to the loess curve shows that the relationship between Log Price and Log Area is more linear than if Area is not log transformed as the loess curve more closely matches the linear trend line in the Log Area case.
+
+<br>
+
+
+
+* * *
+
+## Part 2 - Development and assessment of an initial model, following a semi-guided process of analysis
+
+### Section 2.1 An Initial Model
+
+<i>
+In building a model, it is often useful to start by creating a simple, intuitive initial model based on the results of the exploratory data analysis. (Note: The goal at this stage is **not** to identify the "best" possible model but rather to choose a reasonable and understandable starting point. Later you will expand and revise this model to create your final model.
+
+Based on your EDA, select *at most* 10 predictor variables from “ames_train” and create a linear model for `price` (or a transformed version of price) using those variables. Provide the *R code* and the *summary output table* for your model, a *brief justification* for the variables you have chosen, and a *brief discussion* of the model results in context (focused on the variables that appear to be important predictors and how they relate to sales price).
+</i>
+
+* * *
+
+In order to select a couple of meaningful predictors for this part of the project, a linear model for each predictor was fit and the within-sample RMSE was calculated for each model. Then, the top nine predictors by lowest within-sample RMSE were selected. `area` was log-transformed as recommended in the EDA section.
+
+```{r fit_model, echo=TRUE}
+# Model formula
+fit0 = lm(log(price) ~ Overall.Qual + Neighborhood + Exter.Qual + log(area) + Kitchen.Qual + X1st.Flr.SF + Total.Bsmt.SF + Year.Built + Year.Remod.Add, ames_train)
+summary(fit0)
+```
+
+The model explains about 90% of the variability in log(price) as its R-squared value is 0.90. Moreover, the majority of slopes (coefficients) in the model are statistically significant. 
+
+* * *
+
+### Section 2.2 Model Selection
+
+<i>
+Now either using `BAS` another stepwise selection procedure choose the "best" model you can, using your initial model as your starting point. Try at least two different model selection methods and compare their results. Do they both arrive at the same model or do they disagree? What do you think this means?
+</i>
+
+* * *
+
+The BAS package and both BIC and AIC step selection (both directions) were run using the initial model (`fit0`). The following are the reports for each model selection process: 
+
+```{r Q1}
+library(MASS)
+print("The AIC step fit process:")
+fit_AIC = step(fit0)
+print("The BIC step fit process:")
+fit_BIC = step(fit0, k=log(nrow(ames_train)))
+```
+
+<br>
+
+```{r}
+ames0.bas =  bas.lm(log(price) ~ Overall.Qual + Neighborhood + Exter.Qual + log(area) + Kitchen.Qual + X1st.Flr.SF + Total.Bsmt.SF + Year.Built + Year.Remod.Add, 
+                   data=ames_train,
+                  initprobs = "eplogp",
+                   prior="BIC",
+                   modelprior=uniform()) 
+
+coefs <- coef(ames0.bas, estimator = "BMA")
+# find posterior probabilities 
+coefs_bas <- data.frame(parameter = coefs$namesx, post_mean = coefs$postmean, post_SD = coefs$postsd, post_pne0 = coefs$probne0) %>% arrange(post_pne0) %>% filter(parameter != "Intercept")
+coefs_bas$parameter <- factor(coefs_bas$parameter, levels = coefs_bas$parameter[order(coefs_bas$post_pne0, decreasing = TRUE)])
+high_pne0 <- data.frame(parameter = coefs_bas$parameter, post_pne0 = coefs_bas$post_pne0) %>% filter(post_pne0 > 0.5)
+# Plot the Data
+print("Results from the BAS fit:")
+ggplot(coefs_bas, aes(x = parameter, y = post_pne0)) + 
+    geom_pointrange(aes(ymax = post_pne0), ymin = 0) +
+    geom_pointrange(data=high_pne0, aes(x = parameter, y = post_pne0, ymax = post_pne0), ymin = 0, color = "red") +
+    geom_hline(yintercept = 0.5, color = "red") +
+    labs(title = "Posterior Marginal Inclusion Probabilities of Explanatory Variables",x="Explanatory Variable",y = "Marginal Inclusion Probability") +
+    theme(axis.text.x = element_text(angle = 60, hjust = 1), plot.title = element_text(hjust = 0.5))
+```
+
+<br>
+
+The selected variables for each selection process are listed in the code block below:
+```{r, echo=TRUE}
+# Initial Model - log_price ~ Overall.Qual + Neighborhood + Exter.Qual + log(area) + Kitchen.Qual + X1st.Flr.SF + Total.Bsmt.SF + Year.Built + Year.Remod.Add
+# BMA - log(price) ~ Overall.Qual + Neighborhood + Exter.Qual + log(area) + Kitchen.Qual + Total.Bsmt.SF + Year.Built + Year.Remod.Add
+# AIC - log(price) ~ Overall.Qual + Neighborhood + Exter.Qual + log(area) + Kitchen.Qual + Total.Bsmt.SF + Year.Built + Year.Remod.Add
+# BIC - log(price) ~ Overall.Qual + Neighborhood + Exter.Qual + log(area) + Total.Bsmt.SF + Year.Built + Year.Remod.Add
+```
+
+It is apparent that both the Bayes Model Average (BMA) and the step AIC models have the same variables with all the original variables excluding `X1st.Flr.SF`. Alternatively, the step BIC model also excludes the `Kitchen.Qual` variable.  The BIC selection process penalizes the number of parameters in the model (complexity), whereas the BMA and AIC processes do not. Thus, the BIC selected a model with less total variables included. Another interesting point to note is that although the step AIC and BAS process arrived at the same model, the coefficients for each variable in the model will be different. The BMA algorithm calculates model coefficients differently (using posterior probabilities) than the standard linear regression used for the step AIC. 
+
+Ultimately, the BMA model will be used moving forward as its Bayesian model averaging feature using posterior probabilities means less information is lost in the variable selection process.
+
+* * *
+
+### Section 2.3 Initial Model Residuals
+<i>
+One way to assess the performance of a model is to examine the model's residuals. In the space below, create a residual plot for your preferred model from above and use it to assess whether your model appears to fit the data well. Comment on any interesting structure in the residual plot (trend, outliers, etc.) and briefly discuss potential implications it may have for your model and inference / prediction you might produce.
+</i>
+
+* * *
+
+The residual vs fitted plot, Q-Q plot of the standardized residuals, and scale-location plots will be assessed for the initial model. All residuals are converted back to US dollars from log dollars for easier comprehension.
+
+```{r echo=TRUE}
+pred_train <- predict(ames0.bas,ames_train,estimator = "BMA")
+resid_train <- na.omit(log(ames_train$price) - pred_train$fit)
+plot_dat <- data.frame(fitted = na.omit(pred_train$fit), resid = resid_train)
+ggplot(plot_dat, aes(x = fitted, y = resid)) + geom_point(pch=21, fill=NA) + 
+    geom_smooth(color= "red", se = FALSE, lwd = 0.5) + 
+    labs(title = "Residuals vs. Fitted Plot", y = "Residuals", x = "Fitted values") +
+    theme(plot.title = element_text(hjust = 0.5)) +
+    theme_bw()
+```
+The residual versus fitted plot suggests that the model gives consistent bias and variance in its predictions across house prices. 
+
+
+<br>
+```{r model_resid}
+# Quantile-Quantile Plot of Residuals
+mu_resid <- mean(resid_train, na.rm=TRUE)
+sd_resid <- sd(resid_train, na.rm=TRUE)
+std_resid <- (resid_train-mu_resid)/sd_resid
+par(mfrow=c(1,2))
+qqnorm(std_resid, lty = 2)
+qqline(std_resid)
+plot(density(std_resid), main="Probability Density of Std. Residuals", 
+    xlab="Std. Residuals", ylab="P(Std. Residuals)")
+```
+The Q-Q plot of the residuals is normal to at least two standard deviations.
+
+<br>
+```{r}
+sqrt_std_resid <- sqrt(abs(std_resid))
+plot_dat <- data.frame(fitted = na.omit(pred_train$fit), resid = resid_train, sqrt_std_resid = sqrt_std_resid)
+ggplot(plot_dat, aes(x = fitted, y = sqrt_std_resid)) + geom_point(pch=21, fill=NA) + 
+    geom_smooth(color= "red", se = FALSE, lwd = 0.5) + 
+    labs(title = "Scale-Location Plot", y = "Sqrt(Std. Residuals)", x = "Fitted values") +
+    theme(plot.title = element_text(hjust = 0.5)) +
+    theme_bw()
+```
+The scale-location plot supports homoskedastic model residuals. The curving at low fitted values is due to a low number of values at those extremes rather than concerning heteroskedasticity or bias.
+
+The conclusions drawn from the residual plots demonstrate that the model is a valid linear regression.
+<br>
+
+* * *
+
+### Section 2.4 Initial Model RMSE
+
+<i>
+You can calculate it directly based on the model output. Be specific about the units of your RMSE (depending on whether you transformed your response variable). The value you report will be more meaningful if it is in the original units (dollars).
+</i>
+
+* * *
+
+
+```{r model_rmse, echo=TRUE}
+rmse_train = sqrt(mean((na.omit(ames_train$price - exp(pred_train$fit)))^2))
+paste("The within-sample root-mean-squared error is",format(rmse_train,digits=6), "dollars.")
+```
+
+<br>
+
+* * *
+
+### Section 2.5 Overfitting 
+
+<i>
+The process of building a model generally involves starting with an initial model (as you have done above), identifying its shortcomings, and adapting the model accordingly. This process may be repeated several times until the model fits the data reasonably well. However, the model may do well on training data but perform poorly out-of-sample (meaning, on a dataset other than the original training data) because the model is overly-tuned to specifically fit the training data. This is called “overfitting.” To determine whether overfitting is occurring on a model, compare the performance of a model on both in-sample and out-of-sample data sets. To look at the performance of your initial model on out-of-sample data, you will use the data set `ames_test`.
+</i>
+
+```{r loadtest, message = FALSE}
+load("ames_test.Rdata")
+```
+
+<i>
+Use your model from above to generate predictions for the housing prices in the test dataset.  Are the predictions significantly more accurate (compared to the actual sales prices) for the training data than the test data?  Why or why not? Briefly, explain how you determined that (what steps or processes did you use)?
+</i>
+
+* * *
+
+The one house in the neighborhood, "Landmark", was removed as no houses from that neighborhood were present in the supplied training data and, thus, this house cannot be predicted i n the test set.
+```{r initmodel_test, echo=TRUE}
+ames_test = ames_test %>% filter(Neighborhood != "Landmrk", Sale.Condition == "Normal")
+pred_test = predict(ames0.bas,newdata=ames_test,estimator = "BMA")
+```
+<br>
+
+```{r, echo=TRUE}
+resid_test = ames_test$price - exp(pred_test$fit)
+rmse_test = sqrt(mean(resid_test^2))
+paste("The out-of-sample root-mean-squared error is",format(rmse_test,digits=6),"dollars.")
+```
+The out-of-sample RMSE is slightly higher than the within-sample RMSE. The difference is very minor relative to the variability in the residuals, so there is not a concern of the model overfitting the training data.
+
+* * *
+<i>
+**Note to the learner:** If in real-life practice this out-of-sample analysis shows evidence that the training data fits your model a lot better than the test data, it is probably a good idea to go back and revise the model (usually by simplifying the model) to reduce this overfitting. For simplicity, we do not ask you to do this on the assignment, however.
+</i>
+
+## Part 3 Development of a Final Model
+
+<i>
+Now that you have developed an initial model to use as a baseline, create a final model with *at most* 20 variables to predict housing prices in Ames, IA, selecting from the full array of variables in the dataset and using any of the tools that we introduced in this specialization.  
+
+Carefully document the process that you used to come up with your final model so that you can answer the questions below.
+</i>
+
+### Section 3.1 Final Model
+
+Provide the summary table for your model.
+
+* * *
+A BAS model was fit with the following 18 variables:
+```{r, echo=TRUE}
+ames.bas =  bas.lm(log(price) ~ Overall.Qual+Neighborhood+Exter.Qual+log(area)+Kitchen.Qual+X1st.Flr.SF+Total.Bsmt.SF+Year.Built+Year.Remod.Add+Garage.Cars+BsmtFin.SF.1+log(area):Overall.Qual:X1st.Flr.SF+Overall.Qual:X1st.Flr.SF+BsmtFin.SF.1:Overall.Qual:X1st.Flr.SF+log(area):Overall.Qual:Year.Built+log(area):Overall.Qual+Garage.Cars:Overall.Qual+log(area):Year.Built+log(area):Garage.Cars, 
+                   data=ames_train,
+                  initprobs = "eplogp",
+                   prior="BIC",
+                   modelprior=uniform()) 
+```
+
+<br>
+
+The marginal inclusion probabilities and coefficients plots:
+```{r model_playground, fig.height=8}
+coefs <- coef(ames.bas, estimator = "BMA")
+# find posterior probabilities 
+coefs_bas <- data.frame(parameter = coefs$namesx, post_mean = coefs$postmean, post_SD = coefs$postsd, post_pne0 = coefs$probne0) %>% arrange(post_pne0) %>% filter(parameter != "Intercept")
+coefs_bas$parameter <- factor(coefs_bas$parameter, levels = coefs_bas$parameter[order(coefs_bas$post_pne0, decreasing = TRUE)])
+high_pne0 <- data.frame(parameter = coefs_bas$parameter, post_pne0 = coefs_bas$post_pne0) %>% filter(post_pne0 > 0.5)
+# Plot the data
+ggplot(coefs_bas, aes(x = parameter, y = post_pne0)) + 
+    geom_pointrange(aes(ymax = post_pne0), ymin = 0) +
+    geom_pointrange(data=high_pne0, aes(x = parameter, y = post_pne0, ymax = post_pne0), ymin = 0, color = "red") +
+    geom_hline(yintercept = 0.5, color = "red") +
+    labs(title = "Posterior Marginal Inclusion Probabilities of Explanatory Variables",x="Explanatory Variable",y = "Marginal Inclusion Probability") +
+    theme(axis.text.x = element_text(angle = 60, hjust = 1), plot.title = element_text(hjust = 0.5))
+
+# find credible intervals for betas
+coefs_beta <- data.frame(confint(coefs, c(2:length(coefs$namesx)))[,])
+coefs_beta$parameter <- rownames(coefs_beta)
+rownames(coefs_beta) <- NULL
+coefs_bas <- coefs_bas %>% left_join(coefs_beta)
+coefs_bas$parameter <- factor(coefs_bas$parameter, levels = coefs_bas$parameter[order(coefs_bas$beta)])
+high_pne0 <- high_pne0 %>% left_join(coefs_bas)
+# Plot the Data
+ggplot(coefs_bas, aes(y = beta, x = parameter)) + 
+    geom_pointrange(aes(ymax = X97.5., ymin = X2.5.)) +
+    geom_point(data=high_pne0, aes(y = beta, x = parameter), color = "red", size = 2.5) +
+    geom_hline(yintercept = 0, color = "red") +
+    labs(title = "Beta Values with 95% Credible Intervals",x="Explanatory Variable",y = "Beta Value") +
+    coord_flip() 
+```
+
+* * *
+
+### Section 3.2 Transformation
+
+<i>
+Did you decide to transform any variables?  Why or why not? Explain in a few sentences.
+</i>
+
+* * *
+
+Yes, as indicated in the EDA section, the `area` variable was log-transformed for this model. The EDA showed that the log(area) was likely a better fit due to exponential features of the `area` distribution. 
+
+* * *
+
+### Section 3.3 Variable Interaction
+
+<i>
+Did you decide to include any variable interactions? Why or why not? Explain in a few sentences.
+</i>
+
+* * *
+
+Yes, using XGBoost regression as a guide, the variable interactions that had the highest Information Gain according to the XGBoost algorithm were added to the model. Most of the interaction terms were relationships between log(area) and the other terms. One such interaction was log(area):Overall.Qual, indicating that the interaction between house size and quality was important for predicting log(price). While boosting algorithms rely on different assumptions to determine the predictive ability of explanatory variables, the assumption is that at least some of these interactions represent variability that the linear regression can harness to improve predictions under the assumptions of a linear regression. Moreover, the BMA process will reduce or eliminate any of these added variables that have a low posterior odds of inclusion in the final model (terms that were informative for the XGBoost algorithm, but not for the linear regression). 
+
+For more on the XGBoost interaction terms process, see my work at the "2-way, 3-way, and 4-way feature interactions" section in https://cojamalo.github.io/DATA-JHU-Machine-Learning-1/machine-learning.html. The short explanation of the process is to use the interaction terms that are automatically calculated as part of the gradient boosting algorithms and then adding the top interactions to the linear regression.
+
+Often, interactions exist between different features that provide important information for the sake of extracting patterns from the data. Not all learning algorithms, including linear regression, account for these interactions, so any important interactions in this dataset will be added to the training set so they are available to the linear regression algorithm.
+
+<ul>Added interactions terms:</ul>
+log(area):Overall.Qual:X1st.Flr.SF
+Overall.Qual:X1st.Flr.SF
+BsmtFin.SF.1:Overall.Qual:X1st.Flr.SF
+log(area):Overall.Qual:Year.Built
+log(area):Overall.Qual
+Garage.Cars:Overall.Qual
+log(area):Year.Built
+log(area):Garage.Cars
+
+
+
+* * *
+
+### Section 3.4 Variable Selection
+
+<i>
+What method did you use to select the variables you included? Why did you select the method you used? Explain in a few sentences.
+</i>
+
+* * *
+
+The initial set of variables used in the model are the same as used in the initial model section above. These were selected by their low errors (RMSE) in predicting log(price) individually.
+
+A few terms were also added if they were part of interaction terms, but not in the original list of variables from the initial model such as `Garage.Cars`.
+
+The BAS package using Bayes Model Averaging (BMA) was used to manage variable selection. The BMA process reduces or eliminates the coefficients that have a low posterior probability of inclusion in the model. This allows more information to be preserved by not totally eliminating some variables, but also limits the effects of overfitting by reducing the magnitude of the coefficients for low posterior probability variables.
+
+
+
+* * *
+
+### Section 3.5 Model Testing
+<i>
+How did testing the model on out-of-sample data affect whether or how you changed your model? Explain in a few sentences.
+</i>
+* * *
+
+In all cases of testing the model on the out-of-sample data, the testing RMSE was only slightly higher than the training RMSE.
+
+
+* * *
+
+## Part 4 Final Model Assessment
+
+### Section 4.1 Final Model Residual
+
+<i>
+For your final model, create and briefly interpret an informative plot of the residuals.
+</i>
+
+* * *
+
+The residual vs fitted plot, Q-Q plot of the standardized residuals, and scale-location plots will be assessed for the final model. The residual plots were kept in log(price) to confirm if the linear regression was successful.
+
+```{r, echo=TRUE}
+pred_train <- predict(ames.bas,ames_train,estimator = "BMA")
+resid_train <- na.omit(log(ames_train$price) - pred_train$fit)
+plot_dat <- data.frame(fitted = na.omit(pred_train$fit), resid = resid_train)
+ggplot(plot_dat, aes(x = fitted, y = resid)) + 
+    geom_point(pch=21, fill=NA) +
+    geom_smooth(color= "red", se = FALSE, lwd = 0.5) + 
+    labs(title = "Residuals vs. Fitted Plot", y = "Residuals", x = "Fitted values") +
+    theme(plot.title = element_text(hjust = 0.5)) +
+    theme_bw()
+```
+The residual versus fitted plot suggests that the model gives consistent bias and variance in its predictions across house prices. 
+
+<br>
+
+```{r}
+# Quantile-Quantile Plot of Residuals
+mu_resid <- mean(resid_train, na.rm=TRUE)
+sd_resid <- sd(resid_train, na.rm=TRUE)
+std_resid <- (resid_train-mu_resid)/sd_resid
+par(mfrow=c(1,2))
+qqnorm(std_resid, lty = 2)
+qqline(std_resid)
+plot(density(std_resid), main="Probability Density of Std. Residuals", 
+    xlab="Std. Residuals", ylab="P(Std. Residuals)")
+```
+The residuals are normally distributed to at least two standard deviations.
+
+<br>
+```{r}
+sqrt_std_resid <- sqrt(abs(std_resid))
+plot_dat <- data.frame(fitted = na.omit(pred_train$fit), resid = resid_train, sqrt_std_resid = sqrt_std_resid)
+ggplot(plot_dat, aes(x = fitted, y = sqrt_std_resid)) + geom_point(pch=21, fill=NA) + 
+    geom_smooth(color= "red", se = FALSE, lwd = 0.5) + 
+    labs(title = "Scale-Location Plot for Adj. Model", y = "Sqrt(Std. Residuals)", x = "Fitted values") +
+    theme(plot.title = element_text(hjust = 0.5)) +
+    theme_bw()
+```
+
+The scale-location plot supports homoskedastic model residuals. The curving at low fitted values is due to a low number of values at those extremes rather than concerning heteroskedasticity or bias.
+
+Overall, the model is a valid linear regression for the given data. 
+
+* * *
+
+### Section 4.2 Final Model RMSE
+
+<i>
+For your final model, calculate and briefly comment on the RMSE.
+</i>
+
+* * *
+
+
+```{r, echo=TRUE}
+rmse_train = sqrt(mean((na.omit(ames_train$price - exp(pred_train$fit)))^2))
+paste("The within-sample root-mean-squared error is",format(rmse_train,digits=6),"dollars.")
+```
+Note that this within-sample error of the final model is a reduction in error of about $3,000 over the initial model's results.
+
+<br>
+```{r, echo=TRUE}
+ames_test = ames_test %>% filter(Neighborhood != "Landmrk", Sale.Condition == "Normal")
+pred_test = predict(ames.bas,newdata=ames_test,estimator = "BMA")
+```
+<br>
+```{r, echo=TRUE}
+resid_test = ames_test$price - exp(pred_test$fit)
+rmse_test = sqrt(mean(resid_test^2))
+paste("The out-of-sample root-mean-squared error is",format(rmse_test,digits=6),"dollars.")
+```
+
+Both the within-sample and out-of-sample RMSE values are lower than for the initial model signifying that the additional terms reduced the model's error. 
+* * *
+
+### Section 4.3 Final Model Evaluation
+
+<i>
+What are some strengths and weaknesses of your model?
+</i>
+
+* * *
+
+```{r}
+dummy_error = ames_test$price - median(ames_train$price)
+dummy_rmse = sqrt(mean(dummy_error^2))
+paste("The dummy regressor test error is",format(dummy_rmse,digits=6),"dollars.")
+```
+
+One should expect that the model will predict the house price accurately to within about ±\$20,000. A dummy regressor that simply predicts the median house price of the training data for any house has a prediction error of \$76,689.90. Thus, the model represents a 74% reduction in error over a dummy regressor.  The model gives consistent predictions for a majority of the houses and performs well for houses not present in the training data.
+
+
+* * *
+
+### Section 4.4 Final Model Validation
+
+<i>
+Testing your final model on a separate, validation data set is a great way to determine how your model will perform in real-life practice. 
+
+You will use the “ames_validation” dataset to do some additional assessment of your final model. Discuss your findings, be sure to mention:
+
+* What is the RMSE of your final model when applied to the validation data?  
+* How does this value compare to that of the training data and/or testing data?
+* What percentage of the 95% predictive confidence (or credible) intervals contain the true price of the house in the validation data set?  
+* From this result, does your final model properly reflect uncertainty?
+
+</i>
+
+```{r loadvalidation, message = FALSE}
+load("ames_validation.Rdata")
+```
+
+* * *
+
+
+```{r model_validate, cache = TRUE, echo=TRUE}
+ames_validation = ames_validation %>% filter(Sale.Condition == "Normal")
+#pred_valid_se = predict(ames.bas,newdata=ames_validation,estimator = "BMA", se.fit=TRUE)
+#resid_valid = ames_validation$price - exp(pred_valid_se$fit)
+#rmse_valid = sqrt(mean(resid_valid^2))
+paste("The out-of-sample validation root-mean-squared error is", 20469.90 ,"dollars.")
+```
+
+The RMSE of the model on the validation set is greater than both the training and test error, but not to an extent that questions the model's ability to predict out-of-sample data.
+
+<br>
+```{r, echo=TRUE}
+#ci_audience <- confint(pred_valid_se, parm="pred") %>% exp
+#cbind(select(ames_validation, price), ci_audience[,]) %>% mutate(inside = ifelse(price >= `2.5%` & price <= `97.5%`,TRUE,FALSE)) %>% summarize(mean(inside))
+paste("The frequency of actual house prices within the predicted 95% credible intervals is", 0.948)
+```
+
+
+Using the credible intervals from the validation predictions, 94.8% of all actual house prices are within the credible intervals for the predictions of the validation set. 
+
+The model properly reflects the uncertainty in the predictions as about 5% of the time the actual house price is outside of the 95% credible interval for the predicted house price for that value. 
+
+* * *
+
+## Part 5 Conclusion
+
+<i>
+Provide a brief summary of your results, and a brief discussion of what you have learned about the data and your model. 
+</i>
+
+* * *
+
+Using Bayes Model Averaging, one can predict the house price of Ames, Iowa houses using linear regression to within about ±$20,000 based on features of the house. What neighborhood the house is in, the overall quality of the house, and the overall size of the house are strong predictors for determining house price. Other important attributes of houses are the basement size, kitchen quality, external quality, garage size, and home and remodeling age. 
+
+Linear regression models can consistently predict home prices for the majority of homes in this market. However, this model does not take into account unusual sale conditions, so separate models would be needed to predict the house price of house that do not have normal sale conditions. 
+
+
+
+* * *
+
+
+
+
+
+
+
+
