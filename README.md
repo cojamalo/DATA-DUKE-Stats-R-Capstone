@@ -20,6 +20,13 @@ Completion Date: Sep 9, 2017
 
 Please view https://cojamalo.github.io/DATA-DUKE-Stats-R-Capstone/Final_supporting.html to properly view Peer Review Final Project Supplementary.
 
+Peer Review Final Project Revist
+* Redo of some portions of the analysis that were weak or incorrect
+* Please see this version for most correct analysis
+Completion Date: Sep 25, 2017
+
+Please view https://cojamalo.github.io/DATA-DUKE-Stats-R-Capstone/Final_peer_revisit.html to properly view Peer Review Final Project Revist.
+
 # Project description from Coursera:
 
 For this assignment, you will need to imagine that you are a statistical consultant who has recently been hired by a real estate investment firm based in Ames, Iowa. They have had an intern collect and collate all of the recent house sales in Ames and have put together a large spreadsheet that contains the sale price of each house along with many of its physical features. Your employers want you to take this data and develop a model to predict the selling price of a given home. They hope to use this information to help assess whether the asking price of a house is higher or lower than the true value of the house. If the home is undervalued, it may be a good investment for the firm.
